@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mobile Hand Particles</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050505; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; touch-action: none; /* 禁止默认触摸行为 */ }
+        canvas { display: block; }
+        
+        /* 响应式 UI 容器 */
+        #ui-container {
+            position: absolute;
+            background: rgba(20, 20, 35, 0.85);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #fff;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+            user-select: none;
+            z-index: 10;
+            transition: transform 0.3s ease;
+        }
+
+        /* 桌面端样式 */
+        @media (min-width: 768px) {
+            #ui-container {
+                top: 20px; right: 20px; width: 280px;
+                padding: 20px; border-radius: 12px;
+            }
+        }
+
+        /* 移动端样式：底部抽屉 */
+        @media (max-width: 767px) {
+            #ui-container {
+                bottom: 0; left: 0; width: 100%;
+                padding: 15px 20px 30px 20px; /* 底部留白适应 Home Bar */
+                border-radius: 20px 20px 0 0;
+                box-sizing: border-box;
+                max-height: 40vh;
+                overflow-y: auto;
+            }
+            /* 隐藏不重要的说明以节省空间 */
+            .desktop-hint { display: none; }
+        }
+
+        h2 { margin: 0 0 10px 0; font-size: 16px; font-weight: 600; color: #00d2ff; display: flex; justify-content: space-between; align-items: center; }
+        #toggle-ui { font-size: 12px; color: #aaa; cursor: pointer; border: 1px solid #555; padding: 2px 8px; border-radius: 4px; }
+
+        .control-group { margin-bottom: 12px; }
+        label { display: block; font-size: 11px; margin-bottom: 4px; color: #ccc; }
+        
+        /* Sliders */
+        input[type=range] { width: 100%; -webkit-appearance: none; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 18px; width: 18px; /* 更大的触摸区域 */
+            border-radius: 50%; background: #00d2ff; margin-top: -7px; 
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px;
+        }
+
+        /* Buttons */
+        .btn-grid { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px; margin-bottom: 5px; }
+        button {
+            background: rgba(255,255,255,0.1); border: none;
+            color: white; padding: 10px 0; border-radius: 8px;
+            font-size: 12px; touch-action: manipulation;
+        }
+        button.active { background: #00d2ff; color: #000; font-weight: bold; }
+        
+        input[type="color"] { width: 100%; height: 35px; border: none; background: none; }
+
+        /* Drawing Overlay */
+        #draw-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 5; cursor: crosshair; display: none;
+        }
+        #draw-instruction {
+            position: absolute; top: 15%; width: 100%; text-align: center;
+            color: #00d2ff; pointer-events: none; font-size: 16px; font-weight: bold;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.8); display: none; z-index: 6;
+        }
+
+        #loading {
+            position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%);
+            color: #00d2ff; font-size: 18px; font-weight: bold; pointer-events: none; text-align: center;
+        }
+
+        #input-video { display: none; }
+    </style>
+</head>
+<body>
+
+    <div id="loading">
+        启动视觉引擎...<br>
+        <span style="font-size:12px; color:#aaa; font-weight:normal">请允许摄像头权限 (仅本地处理)</span>
+    </div>
+
+    <video id="input-video" playsinline></video>
+
+    <div id="ui-container">
+        <h2>
+            粒子控制台 
+            <span id="toggle-ui" onclick="toggleUI()">收起</span>
+        </h2>
+        
+        <div class="control-group">
+            <div class="btn-grid">
+                <button id="btn-nebula" class="active">✨</button>
+                <button id="btn-heart">❤️</button>
+                <button id="btn-sphere">🌐</button>
+                <button id="btn-custom">🖌️</button>
+            </div>
+            <label style="text-align:center">切换形态</label>
+        </div>
+
+        <div class="control-group">
+            <label>粒子颜色</label>
+            <input type="color" id="color-picker" value="#00d2ff">
+        </div>
+
+        <div class="control-group">
+            <label>粒子数量 (性能调节)</label>
+            <input type="range" id="density-slider" min="2000" max="20000" step="1000" value="8000">
+        </div>
+
+        <div class="control-group">
+            <label>手势敏感度</label>
+            <input type="range" id="diffuse-slider" min="0.1" max="3.0" step="0.1" value="1.5">
+        </div>
+        
+        <div class="desktop-hint" style="font-size: 10px; color: #666; margin-top: 5px;">
+            交互: 捏合手指聚合，张开扩散
+        </div>
+    </div>
+
+    <canvas id="draw-overlay"></canvas>
+    <div id="draw-instruction">请在屏幕上滑动绘制图案<br><small>完成后点击下方任意按钮退出</small></div>
+
+    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.154.0/build/three.module.js",
+                "@mediapipe/hands": "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js",
+                "@mediapipe/camera_utils": "https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // --- Mobile Detection & Config ---
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        
+        const config = {
+            // Lower particle count on mobile for FPS
+            particleCount: isMobile ? 6000 : 15000, 
+            particleSize: isMobile ? 0.3 : 0.15, // Make particles bigger on small screens
+            baseColor: new THREE.Color('#00d2ff'),
+            handInfluence: 0,
+            sensitivity: 1.5,
+            mode: 'nebula',
+            drawnPoints: []
+        };
+
+        // Update slider initial value based on device
+        document.getElementById('density-slider').value = config.particleCount;
+
+        // --- Three.js Setup ---
+        const scene = new THREE.Scene();
+        // Darker fog for mobile to hide low particle count
+        scene.fog = new THREE.FogExp2(0x050505, isMobile ? 0.03 : 0.02); 
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.z = isMobile ? 25 : 20; // Move camera back slightly on mobile
+
+        const renderer = new THREE.WebGLRenderer({ antialias: !isMobile, alpha: true }); // Disable antialias on mobile for perf
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Cap pixel ratio
+        document.body.appendChild(renderer.domElement);
+
+        // --- Particle System ---
+        let geometry, material, particles;
+        const positions = [];
+        const targets = [];
+        
+        function getTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 32; canvas.height = 32;
+            const ctx = canvas.getContext('2d');
+            const grad = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+            grad.addColorStop(0, 'rgba(255,255,255,1)');
+            grad.addColorStop(0.4, 'rgba(255,255,255,0.5)');
+            grad.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 32, 32);
+            const texture = new THREE.Texture(canvas);
+            texture.needsUpdate = true;
+            return texture;
+        }
+
+        function initParticles(count) {
+            if (particles) scene.remove(particles);
+
+            geometry = new THREE.BufferGeometry();
+            positions.length = 0;
+            targets.length = 0;
+
+            for (let i = 0; i < count; i++) {
+                const x = (Math.random() - 0.5) * 50;
+                const y = (Math.random() - 0.5) * 50;
+                const z = (Math.random() - 0.5) * 50;
+                positions.push(x, y, z);
+                targets.push(x, y, z);
+            }
+
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            
+            material = new THREE.PointsMaterial({
+                size: config.particleSize,
+                color: config.baseColor,
+                map: getTexture(),
+                transparent: true,
+                opacity: 0.8,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
+            });
+
+            particles = new THREE.Points(geometry, material);
+            scene.add(particles);
+            updateShape(config.mode);
+        }
+
+        // --- Background Stars ---
+        const bgGeometry = new THREE.BufferGeometry();
+        const bgPos = [];
+        for(let i=0; i < (isMobile ? 800 : 2000); i++) {
+            bgPos.push((Math.random()-0.5)*100, (Math.random()-0.5)*100, (Math.random()-0.5)*50 - 20);
+        }
+        bgGeometry.setAttribute('position', new THREE.Float32BufferAttribute(bgPos, 3));
+        const bgStars = new THREE.Points(bgGeometry, new THREE.PointsMaterial({color: 0x555555, size: 0.15}));
+        scene.add(bgStars);
+
+        // --- Shape Logic ---
+        function updateShape(mode) {
+            const count = geometry.attributes.position.count;
+            const newTargets = [];
+
+            if (mode === 'sphere') {
+                const radius = isMobile ? 6 : 8;
+                for (let i = 0; i < count; i++) {
+                    const phi = Math.acos(-1 + (2 * i) / count);
+                    const theta = Math.sqrt(count * Math.PI) * phi;
+                    newTargets.push(
+                        radius * Math.cos(theta) * Math.sin(phi),
+                        radius * Math.sin(theta) * Math.sin(phi),
+                        radius * Math.cos(phi)
+                    );
+                }
+            } else if (mode === 'heart') {
+                const scale = isMobile ? 0.3 : 0.4;
+                for (let i = 0; i < count; i++) {
+                    const p = i / count * Math.PI * 2;
+                    // Parametric Heart
+                    const x = 16 * Math.pow(Math.sin(p), 3);
+                    const y = 13 * Math.cos(p) - 5 * Math.cos(2*p) - 2 * Math.cos(3*p) - Math.cos(4*p);
+                    const z = (Math.random() - 0.5) * 4; 
+                    
+                    // Add Random Scatter to fill volume
+                    const r = Math.random();
+                    newTargets.push(x * scale * r, y * scale * r, z);
+                }
+            } else if (mode === 'custom' && config.drawnPoints.length > 0) {
+                 const pointsLen = config.drawnPoints.length;
+                 for (let i = 0; i < count; i++) {
+                     const p = config.drawnPoints[i % pointsLen];
+                     newTargets.push(p.x + (Math.random()-0.5)*0.5, p.y + (Math.random()-0.5)*0.5, p.z + (Math.random()-0.5)*0.5);
+                 }
+            } else { // Nebula
+                for (let i = 0; i < count; i++) {
+                    newTargets.push(
+                        (Math.random()-0.5) * 25,
+                        (Math.random()-0.5) * 25,
+                        (Math.random()-0.5) * 15
+                    );
+                }
+            }
+
+            for (let i = 0; i < count * 3; i++) {
+                targets[i] = newTargets[i] || 0;
+            }
+        }
+
+        // --- Drawing Logic (Mouse & Touch) ---
+        const drawCanvas = document.getElementById('draw-overlay');
+        const drawCtx = drawCanvas.getContext('2d');
+        let isDrawing = false;
+        let tempPoints = [];
+
+        function resizeDrawCanvas() {
+            drawCanvas.width = window.innerWidth;
+            drawCanvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeDrawCanvas);
+
+        function startDrawing() {
+            config.mode = 'custom';
+            document.getElementById('draw-overlay').style.display = 'block';
+            document.getElementById('draw-instruction').style.display = 'block';
+            document.getElementById('ui-container').style.opacity = '0.3'; // Dim UI
+            
+            // Buttons visual update
+            document.querySelectorAll('.btn-grid button').forEach(b => b.classList.remove('active'));
+            document.getElementById('btn-custom').classList.add('active');
+            
+            drawCtx.clearRect(0,0, drawCanvas.width, drawCanvas.height);
+        }
+
+        function stopDrawing() {
+            isDrawing = false;
+            document.getElementById('draw-overlay').style.display = 'none';
+            document.getElementById('draw-instruction').style.display = 'none';
+            document.getElementById('ui-container').style.opacity = '1';
+            
+            if (tempPoints.length > 5) {
+                config.drawnPoints = tempPoints;
+                updateShape('custom');
+            }
+        }
+
+        // Unified Input Handler
+        function handleInput(x, y) {
+            drawCtx.fillStyle = '#00d2ff';
+            drawCtx.beginPath();
+            drawCtx.arc(x, y, 3, 0, Math.PI * 2);
+            drawCtx.fill();
+
+            const vec = new THREE.Vector3();
+            const pos = new THREE.Vector3();
+            
+            // Convert 2D screen to 3D world z=0 plane
+            vec.set((x / window.innerWidth) * 2 - 1, -(y / window.innerHeight) * 2 + 1, 0.5);
+            vec.unproject(camera);
+            vec.sub(camera.position).normalize();
+            const distance = -camera.position.z / vec.z;
+            pos.copy(camera.position).add(vec.multiplyScalar(distance));
+            
+            tempPoints.push({x: pos.x, y: pos.y, z: pos.z});
+        }
+
+        // Mouse Events
+        drawCanvas.addEventListener('mousedown', () => { isDrawing = true; tempPoints = []; });
+        drawCanvas.addEventListener('mousemove', (e) => { if(isDrawing) handleInput(e.clientX, e.clientY); });
+        drawCanvas.addEventListener('mouseup', stopDrawing);
+
+        // Touch Events
+        drawCanvas.addEventListener('touchstart', (e) => { 
+            e.preventDefault(); 
+            isDrawing = true; 
+            tempPoints = []; 
+        }, {passive: false});
+        
+        drawCanvas.addEventListener('touchmove', (e) => { 
+            e.preventDefault();
+            if(!isDrawing) return;
+            const touch = e.touches[0];
+            handleInput(touch.clientX, touch.clientY);
+        }, {passive: false});
+        
+        drawCanvas.addEventListener('touchend', stopDrawing);
+
+
+        // --- MediaPipe Hands ---
+        const videoElement = document.getElementById('input-video');
+        
+        function onResults(results) {
+            document.getElementById('loading').style.display = 'none';
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                const thumb = landmarks[4];
+                const index = landmarks[8];
+                const distance = Math.sqrt(Math.pow(thumb.x - index.x, 2) + Math.pow(thumb.y - index.y, 2));
+
+                let val = (distance - 0.03) * 6; // Adjusted math for mobile cameras
+                val = Math.max(0, Math.min(1, val));
+                config.handInfluence = THREE.MathUtils.lerp(config.handInfluence, val, 0.2);
+            } else {
+                 config.handInfluence = THREE.MathUtils.lerp(config.handInfluence, 0, 0.05);
+            }
+        }
+
+        async function startMediaPipe() {
+            if (!window.Hands) { console.error("MediaPipe failed"); return; }
+            
+            const hands = new window.Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+            
+            hands.setOptions({
+                maxNumHands: 1,
+                // Use Lite model on mobile for FPS, Full on desktop
+                modelComplexity: isMobile ? 0 : 1, 
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+            
+            hands.onResults(onResults);
+
+            const cameraUtils = new window.Camera(videoElement, {
+                onFrame: async () => { await hands.send({image: videoElement}); },
+                width: isMobile ? 480 : 640,
+                height: isMobile ? 640 : 480,
+                facingMode: 'user' // Crucial for mobile front camera
+            });
+            cameraUtils.start();
+        }
+
+        // --- UI Interactions ---
+        window.toggleUI = function() {
+            const ui = document.getElementById('ui-container');
+            const btn = document.getElementById('toggle-ui');
+            if (ui.style.transform === 'translateY(85%)') {
+                ui.style.transform = 'translateY(0)';
+                btn.innerText = '收起';
+            } else {
+                ui.style.transform = 'translateY(85%)';
+                btn.innerText = '展开';
+            }
+        };
+
+        document.getElementById('density-slider').addEventListener('change', (e) => { // Change on release for perf
+            config.particleCount = parseInt(e.target.value);
+            initParticles(config.particleCount);
+        });
+
+        document.getElementById('diffuse-slider').addEventListener('input', (e) => config.sensitivity = parseFloat(e.target.value));
+        document.getElementById('color-picker').addEventListener('input', (e) => {
+            config.baseColor.set(e.target.value);
+            if(material) material.color.set(e.target.value);
+        });
+
+        const btns = { 'btn-nebula': 'nebula', 'btn-heart': 'heart', 'btn-sphere': 'sphere', 'btn-custom': 'custom' };
+        Object.keys(btns).forEach(id => {
+            document.getElementById(id).addEventListener('click', (e) => {
+                document.querySelectorAll('.btn-grid button').forEach(b => b.classList.remove('active'));
+                // Check if target is the button or icon inside
+                const target = e.target.tagName === 'BUTTON' ? e.target : e.target.parentElement;
+                target.classList.add('active');
+                
+                const mode = btns[id];
+                if (mode === 'custom') startDrawing();
+                else { config.mode = mode; updateShape(mode); }
+            });
+        });
+
+        // --- Animation ---
+        initParticles(config.particleCount);
+        
+        window.addEventListener('load', () => setTimeout(startMediaPipe, 1000));
+
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const time = clock.getElapsedTime();
+            const positionsArr = geometry.attributes.position.array;
+            
+            particles.rotation.y = time * 0.05;
+            bgStars.rotation.y = time * 0.02;
+
+            const diffusionStrength = config.handInfluence * 15 * config.sensitivity; 
+
+            for (let i = 0; i < config.particleCount; i++) {
+                const ix = i * 3;
+                const tx = targets[ix]; const ty = targets[ix+1]; const tz = targets[ix+2];
+
+                const nx = Math.sin(time + i) * 0.05;
+                const ny = Math.cos(time + i * 0.5) * 0.05;
+                
+                // Optimized math for JS
+                const distInv = 1 / (Math.sqrt(tx*tx + ty*ty + tz*tz) + 0.01);
+                
+                const destX = tx + (tx * distInv) * diffusionStrength + nx;
+                const destY = ty + (ty * distInv) * diffusionStrength + ny;
+                const destZ = tz + (tz * distInv) * diffusionStrength + nx;
+
+                positionsArr[ix] += (destX - positionsArr[ix]) * 0.08;
+                positionsArr[ix+1] += (destY - positionsArr[ix+1]) * 0.08;
+                positionsArr[ix+2] += (destZ - positionsArr[ix+2]) * 0.08;
+            }
+
+            geometry.attributes.position.needsUpdate = true;
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            resizeDrawCanvas();
+        });
+    </script>
+</body>
+</html>  
